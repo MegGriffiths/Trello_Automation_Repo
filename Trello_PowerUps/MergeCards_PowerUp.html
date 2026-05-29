@@ -1,0 +1,143 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <script src="https://p.trellocdn.com/power-up.min.js"></script>
+</head>
+<body>
+<script>
+const APP_KEY = "YOUR_TRELLO_API_KEY";
+const APP_NAME = "Merge Labeled Cards";
+const APP_AUTHOR = "Your Company or Name";
+
+const MERGE_LABEL_NAME = "Merge Candidate";
+const ARCHIVE_ORIGINALS = true;
+
+window.TrelloPowerUp.initialize({
+  "board-buttons": function(t) {
+    return [{
+      text: "Merge Cards",
+      condition: "edit",
+      callback: function(t) {
+        return t.popup({
+          type: "confirm",
+          title: "Merge labeled cards",
+          message:
+            "Before continuing, make sure exactly two open cards on this board have the label “" +
+            MERGE_LABEL_NAME +
+            "”. This will create one combined card from those two cards. " +
+            (ARCHIVE_ORIGINALS
+              ? "The original cards will be archived after the merged card is created."
+              : "The original cards will remain open, but the merge label will be removed."),
+          confirmText: "Continue",
+          cancelText: "Cancel",
+          confirmStyle: "primary",
+          onConfirm: function(t) {
+            return t.popup({
+              type: "confirm",
+              title: "Final confirmation",
+              message:
+                "Run the merge now? This action will create a new combined card and modify the two labeled source cards.",
+              confirmText: "Merge now",
+              cancelText: "Cancel",
+              confirmStyle: ARCHIVE_ORIGINALS ? "danger" : "primary",
+              onConfirm: async function(t) {
+                try {
+                  await mergeLabeledCards(t);
+                  return t.closePopup();
+                } catch (err) {
+                  return t.alert({
+                    message: "Merge failed: " + (err.message || err)
+                  });
+                }
+              }
+            });
+          }
+        });
+      }
+    }];
+  }
+}, {
+  appKey: APP_KEY,
+  appName: APP_NAME,
+  appAuthor: APP_AUTHOR
+});
+
+async function mergeLabeledCards(t) {
+  const rest = await t.getRestApi();
+
+  const authorized = await rest.isAuthorized();
+  if (!authorized) {
+    await rest.authorize({ scope: "read,write" });
+  }
+
+  const board = await t.board("id");
+
+  const labels = await rest.get(`/boards/${board.id}/labels`);
+  const mergeLabel = labels.find(label => label.name === MERGE_LABEL_NAME);
+
+  if (!mergeLabel) {
+    throw new Error(`No label named "${MERGE_LABEL_NAME}" was found on this board.`);
+  }
+
+  const cards = await rest.get(
+    `/boards/${board.id}/cards?fields=id,name,desc,url,idList,idLabels,closed`
+  );
+
+  const candidates = cards.filter(card =>
+    !card.closed &&
+    Array.isArray(card.idLabels) &&
+    card.idLabels.includes(mergeLabel.id)
+  );
+
+  if (candidates.length !== 2) {
+    throw new Error(
+      `Found ${candidates.length} cards labeled "${MERGE_LABEL_NAME}". Exactly 2 are required.`
+    );
+  }
+
+  const [cardA, cardB] = candidates;
+
+  const mergedDescription =
+`# Merged Card
+
+## Source Card 1: ${cardA.name}
+${cardA.url}
+
+${cardA.desc || "_No description_"}
+
+---
+
+## Source Card 2: ${cardB.name}
+${cardB.url}
+
+${cardB.desc || "_No description_"}`;
+
+  const mergedCard = await rest.post("/cards", {
+    idList: cardA.idList,
+    name: `Merged: ${cardA.name} + ${cardB.name}`,
+    desc: mergedDescription
+  });
+
+  await rest.post(`/cards/${mergedCard.id}/actions/comments`, {
+    text:
+`Merged from:
+- ${cardA.name}: ${cardA.url}
+- ${cardB.name}: ${cardB.url}`
+  });
+
+  await rest.delete(`/cards/${cardA.id}/idLabels/${mergeLabel.id}`);
+  await rest.delete(`/cards/${cardB.id}/idLabels/${mergeLabel.id}`);
+
+  if (ARCHIVE_ORIGINALS) {
+    await rest.put(`/cards/${cardA.id}/closed`, { value: true });
+    await rest.put(`/cards/${cardB.id}/closed`, { value: true });
+  }
+
+  return t.alert({
+    message: "Merged card created successfully."
+  });
+}
+</script>
+</body>
+</html>
