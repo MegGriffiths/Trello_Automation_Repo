@@ -4,11 +4,12 @@
   <meta charset="utf-8" />
   <script src="https://p.trellocdn.com/power-up.min.js"></script>
 </head>
+
 <body>
 <script>
 const APP_KEY = "59e65674db6b9e90efedf78f2581a3fb";
 const APP_NAME = "Merge Labeled Cards";
-const APP_AUTHOR = "Your Company or Name";
+const APP_AUTHOR = "Your Name or Company";
 
 const MERGE_LABEL_NAME = "Merge Candidate";
 const ARCHIVE_ORIGINALS = true;
@@ -18,42 +19,63 @@ window.TrelloPowerUp.initialize({
     return [{
       text: "Merge Cards",
       condition: "edit",
-      callback: function(t) {
-        return t.popup({
-          type: "confirm",
-          title: "Merge labeled cards",
-          message:
-            "Before continuing, make sure exactly two open cards on this board have the label “" +
-            MERGE_LABEL_NAME +
-            "”. This will create one combined card from those two cards. " +
-            (ARCHIVE_ORIGINALS
-              ? "The original cards will be archived after the merged card is created."
-              : "The original cards will remain open, but the merge label will be removed."),
-          confirmText: "Continue",
-          cancelText: "Cancel",
-          confirmStyle: "primary",
-          onConfirm: function(t) {
-            return t.popup({
-              type: "confirm",
-              title: "Final confirmation",
-              message:
-                "Run the merge now? This action will create a new combined card and modify the two labeled source cards.",
-              confirmText: "Merge now",
-              cancelText: "Cancel",
-              confirmStyle: ARCHIVE_ORIGINALS ? "danger" : "primary",
-              onConfirm: async function(t) {
-                try {
-                  await mergeLabeledCards(t);
-                  return t.closePopup();
-                } catch (err) {
-                  return t.alert({
-                    message: "Merge failed: " + (err.message || err)
-                  });
-                }
-              }
+
+      callback: async function(t) {
+        try {
+          const rest = await t.getRestApi();
+
+          const authorized = await rest.isAuthorized();
+          if (!authorized) {
+            await rest.authorize({
+              scope: "read,write",
+              expiration: "never",
+              interactive: true
             });
           }
-        });
+
+          return t.popup({
+            type: "confirm",
+            title: "Merge labeled cards",
+            message:
+              "Before continuing, make sure exactly two open cards on this board have the label “" +
+              MERGE_LABEL_NAME +
+              "”. This will create one combined card from those two cards. " +
+              (ARCHIVE_ORIGINALS
+                ? "The original cards will be archived after the merged card is created."
+                : "The original cards will remain open, but the merge label will be removed."),
+            confirmText: "Continue",
+            cancelText: "Cancel",
+            confirmStyle: "primary",
+
+            onConfirm: function(t) {
+              return t.popup({
+                type: "confirm",
+                title: "Final confirmation",
+                message:
+                  "Run the merge now? This action will create a new combined card and modify the two labeled source cards.",
+                confirmText: "Merge now",
+                cancelText: "Cancel",
+                confirmStyle: ARCHIVE_ORIGINALS ? "danger" : "primary",
+
+                onConfirm: async function(t) {
+                  try {
+                    await mergeLabeledCards(t);
+                    return t.closePopup();
+                  } catch (err) {
+                    return t.alert({
+                      message: "Merge failed: " + (err.message || err)
+                    });
+                  }
+                }
+              });
+            }
+          });
+
+        } catch (err) {
+          return t.alert({
+            message: "Authorization failed: " + (err.message || err)
+          });
+        }
       }
     }];
   }
@@ -65,12 +87,6 @@ window.TrelloPowerUp.initialize({
 
 async function mergeLabeledCards(t) {
   const rest = await t.getRestApi();
-
-  const authorized = await rest.isAuthorized();
-  if (!authorized) {
-    await rest.authorize({ scope: "read,write" });
-  }
-
   const board = await t.board("id");
 
   const labels = await rest.get(`/boards/${board.id}/labels`);
